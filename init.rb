@@ -1,8 +1,50 @@
+# TODO:
+# Support versions and milestones
+
 require 'rubygems'
 require 'active_resource'
 require 'appscript'
 include Appscript
-require 'api'
+require "pp"
+require "yaml"
+
+CONFIG = YAML::load(File.open(File.expand_path('../config.yml', __FILE__)))
+Things = app("Things")
+
+class Issue < ActiveResource::Base
+	CONFIG.each { |k,v| self.send("#{k.to_s}=".to_sym,v) }
+end
+
+class Project < ActiveResource::Base
+	CONFIG.each { |k,v| self.send("#{k.to_s}=".to_sym,v) }
+end
+
+@priorities = {
+	'Low' 			=> 3,	
+	'Normal' 		=> 4,
+	'Medium' 		=> 4,
+	'High' 			=> 5,
+	'Urgent' 		=> 6,
+	'Immediate' => 7
+}
+
+@trackers = {
+	'Bug'				=> 1,
+	'Feature' 	=> 2,
+	'Support' 	=> 3,
+	'Idea' 			=> 4 # custom
+}
+
+@issue_statuses = {
+	'New'         => 1,
+	'In Progress' => 2,
+	'Resolved'  	=> 3,
+	'Feedback'  	=> 4,
+	'Closed'    	=> 5,
+	'Rejected'		=> 6
+}
+
+@completed_statuses = ['Resolved', 'Closed', 'Rejected']
 
 def pull_projects  
   @redmine_projects = Project.find(:all)
@@ -15,92 +57,109 @@ def pull_projects
   end
 end
 
-
-
-def add_things_id_to_issue(id,tid)
-  issue = Issue.find(id)
-  issue.custom_field_values = {"1", tid}
-  if issue.save
-    puts issue.id
-  else
-    puts issue.errors.full_messages
-  end
+def tagline(issue)
+	tags = []
+	if issue.priority.name != "Normal"
+		tags << issue.priority.name
+	end
+	tags << issue.tracker.name
+	tags << 'redmine'
+	tags.join ','
 end
 
 def pull_issues
   @redmine_issues = Issue.find(:all)
   @redmine_issues.each do |rs|
-    begin
-      tag = Things.tags['issue-id-'+rs.id].to_dos.get
-      puts "Updating #{rs.subject}"      
-      to_dos = Things.tags['issue-id-'+rs.id].get.to_dos.get
-      to_do = to_dos[0]
-      to_do.name.set(rs.subject)
-      unless rs.description.nil?
-        notes = rs.description+" http://issues.theablefew.com/#{rs.id}"
-        to_do.notes.set(notes)
-        
-      end
-      to_do.project.set(Things.projects[rs.project.name])
-      to_do.tag_names.set("issue-id-"+rs.id)
-    rescue
-      puts "Doesn't exist"
-      puts "Creating #{rs.subject}"
+		puts "Updating #{rs.subject} (#{rs.id})"      
+		to_dos = Things.tags['redmine'].get.to_dos.get
+		to_do = to_dos.select { |td| td.notes.get =~ /Issue: ##{rs.id}/ }.first
 
-      to_do = Things.make(:new => :to_do, :with_properties =>{
-        :name => rs.subject
-        }
-      )
-      unless rs.description.nil?
-        notes = rs.description+" http://issues.theablefew.com/#{rs.id}"
-        to_do.notes.set(notes)
-      end
-      to_do.tag_names.set("issue-id-"+rs.id)
-      to_do.project.set(Things.projects[rs.project.name])
-      add_things_id_to_issue(rs.id, to_do.object_id)
-    end
-    puts rs.status.name
-    puts rs.id
-    puts "=-------------------------"
-    if rs.status.name == "closed"
-      puts "#{rs.id} should be closed"
-      to_do.status.set("completed")
+		unless to_do
+			puts "\tis a new task"
+			to_do = Things.make(:new => :to_do, 
+				:with_properties =>{
+		   		:name => rs.subject
+		  	}
+			)
+		
+			unless rs.save
+	    	puts rs.errors.full_messages
+	  	end
+		
+			to_do.project.set(Things.projects[rs.project.name])				
+			to_do.tag_names.set(tagline(rs))			
+			to_do.name.set(rs.subject)			
+
+			notes = (rs.description || "") + "\nIssue: ##{rs.id}"
+			to_do.notes.set(notes)
+		end
+
+		to_do.project.set(Things.projects[rs.project.name])
+		to_do.tag_names.set(tagline(rs) + ", " + to_do.tag_names.get)		
+
+    if @completed_statuses.include? rs.status.name
+			puts "\t...closed"
+      to_do.status.set(:completed)
     end
   end
 end
 
-
-
-
 def push_issues
   puts "Pushing Issues"
-  to_dos = Things.to_dos.get
+  to_dos = Things.tags['redmine'].get.to_dos.get
   to_dos.each do |to_do|
     path = to_do.inspect.split('.')
     if path[2] == "projects"
     else
-      tags = to_do.tag_names.get
-      puts tags.gsub("issue-id-","")
-      issue = Issue.find(tags.gsub("issue-id-",""))
-      status = to_do.status.get
-      status = status.to_s
-      if status == "completed"
-        puts "should make it complete"
-        if issue.status.name != "Closed"
-          issue.status_id = 5
-          if issue.save
-            puts issue.id
-          else
-            puts issue.errors.full_messages
-          end
-        else
-          puts "It's already closed. Nothing left to do."
-        end
+			to_do.notes.get =~ /Issue: #(\d+)/
+			issue_id = $1
+			issue = nil
+			unless issue_id
+				project_name = to_do.project.get.name.get
+				project = @redmine_projects.select {|p| p.name == project_name}.first
+				if project
+					puts "Creating issue #{to_do.name.get}"
+					issue = Issue.create :subject => to_do.name.get,
+											 				 :project_id => project.id,
+											         :description => to_do.notes.get
+											
+					t = "#{to_do.notes.get}\nIssue: ##{issue.id}"
+					to_do.notes.set(t)											
+				else
+					puts "Unknown redmine project #{project_name}"
+					next
+				end
+			else
+				issue = Issue.find(issue_id)
+			end
+			
+			tags = to_do.tag_names.get.split(',').map(&:strip)
+			@priorities.each do |name, id|
+				if tags.include? name
+					issue.priority_id = id
+					break
+				end
+			end
+			
+			@trackers.each do |name, id|
+				if tags.include? name
+					issue.tracker_id = id
+					break
+				end
+			end
+			
+			if to_do.status.get.to_s == "completed"
+        issue.status_id = @issue_statuses['Resolved'] unless @completed_statuses.include? issue.status.name
+      end			
+
+			if !issue.save
+        puts issue.errors.full_messages
       end
+
     end
   end
 end
 
 pull_projects
-pull_issues
 push_issues
+pull_issues

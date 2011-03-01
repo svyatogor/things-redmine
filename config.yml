@@ -1,0 +1,4 @@
+site: http://redmine.installation
+user: username
+password: password
+# proxy:

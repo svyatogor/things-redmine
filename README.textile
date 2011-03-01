@@ -4,9 +4,9 @@ things-redmine is a ruby script to attempt to sync Redmine with the Things.app d
 
 h2. Usage
 
-* Clone the repo
-* Edit the api.rb and replace with your credentials. This will be yaml-ized soon. 
 * Turn on API access in Redmine under Administration -> Settings -> Authentication -> Enable REST web service
+* Clone the repo
+* Edit the config.yml and fill in redmine details. 
 * Back up your Things DB 
 <pre>cp ~/Library/Application Support/Cultured Code/Things/database.xml ~/Library/Application Support/Cultured Code/Things/database-backup.xml</pre>
 * Then run: 
@@ -19,9 +19,16 @@ h2. Required Gems
 
 h2. Current State and Gotchas
 
-Right now it's very basic. This is just the beginning. This is by no means a complete project yet. I just got tired of waiting. The things todo class does not allow you to set the ID of the todo, so to ensure no duplicates are created the applescript uses a tag on the todo element based on the ID from redmine.
+This script is not meant for full fledged syncing it is rather intended to help developers manage their Redmine tasks in Things. Tasks used while syncing are marked with 'redmine' tag. Relation between tasks is established using "Issue: #N" text in notes where N is issue id.
 
+The following information is synced both ways: Tracker, Priority, Status. Tags are used to represent the first two. Name and description are synced only when tasks are created in either location, any changes happening from then on are ignored.
 
-h1. Please fork!
+Projects are synced only from Redmine to Things. Moving tasks in Redmine will move them in Things but not vise versa.
 
-This would be a very cool tool to have. Things.app (CulturedCode.com) is the best ToDo list out there and having a real solution would be wonderful!
+h1. TODO
+
+A lot of improvements could be made to the syncing process. It is partially limited though by Redmine REST API.
+
+h1. Acknowledgments
+
+This script is based on work by theablefew github user. You can find original repo in the Network. Though original script had different purposes it helped me to get started on this work.
